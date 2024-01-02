@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.6;
+// report-written use a floating is bad 
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -59,6 +60,8 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param _raffleDuration the duration in seconds of the raffle
     constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) ERC721("Puppy Raffle", "PR") {
         entranceFee = _entranceFee;
+        // written check for zero address!
+        // input validation 
         feeAddress = _feeAddress;
         raffleDuration = _raffleDuration;
         raffleStartTime = block.timestamp;
@@ -77,30 +80,39 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @notice duplicate entrants are not allowed
     /// @param newPlayers the list of players to enter the raffle
     function enterRaffle(address[] memory newPlayers) public payable {
+        // what if it is 0 ?
         require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
         for (uint256 i = 0; i < newPlayers.length; i++) {
             players.push(newPlayers[i]);
         }
 
         // Check for duplicates
+        // uint256 playerLength = players.length;
+        // We should cache the array 
+        // written this is a very expensive operation, and should be avoided , DoS Attack vector
         for (uint256 i = 0; i < players.length - 1; i++) {
             for (uint256 j = i + 1; j < players.length; j++) {
                 require(players[i] != players[j], "PuppyRaffle: Duplicate player");
             }
-        }
+        } 
         emit RaffleEnter(newPlayers);
     }
 
     /// @param playerIndex the index of the player to refund. You can find it externally by calling `getActivePlayerIndex`
     /// @dev This function will allow there to be blank spots in the array
     function refund(uint256 playerIndex) public {
+        // written-skipped MEV 
         address playerAddress = players[playerIndex];
         require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
         require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
-
+        // written Reentrancy
         payable(msg.sender).sendValue(entranceFee);
 
         players[playerIndex] = address(0);
+        // written 
+        // If an event can be manipulated
+        // An Event is missing
+        // An Event is wrong 
         emit RaffleRefunded(playerAddress);
     }
 
@@ -113,6 +125,8 @@ contract PuppyRaffle is ERC721, Ownable {
                 return i;
             }
         }
+        // q what if the player is at index 0 ?
+        // written if the player is at index 0 , it will return 0 , which is the same as not being active . 
         return 0;
     }
 
@@ -123,19 +137,38 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @dev we reset the active players array after the winner is selected
     /// @dev we send 80% of the funds to the winner, the other 20% goes to the feeAddress
     function selectWinner() external {
+        // q does this follow CEI ? - no 
+        // written recommend to follow CEI 
         require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
         require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        // written randomness
+        // fixes : Chainlink VRF 
         uint256 winnerIndex =
             uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
         address winner = players[winnerIndex];
+        // written q why not just a address(this).balace ?
         uint256 totalAmountCollected = players.length * entranceFee;
+
+        // q is the 80% correct ? 
+        // written Magic Numbers
+        // uint256 public constant PRIce_POOL_PERCENTAGE = 80;
+        // uint256 public constant FEE_PERCENTAGE = 20;
+        // uint256 public constant TOTAL_PERCENTAGE = 100;
+        // 0, 1
+
         uint256 prizePool = (totalAmountCollected * 80) / 100;
         uint256 fee = (totalAmountCollected * 20) / 100;
+        // this is the total fees the pwner should be able t collect
+        // written overflow 
         totalFees = totalFees + uint64(fee);
-
+        // written unsafe casting
         uint256 tokenId = totalSupply();
 
         // We use a different RNG calculate from the winnerIndex to determine rarity
+        // written randomness
+        // written people can revert the TX till they win . 
+        // q if our transaction picks a winner and we dnt like it , revert ?
+        // q gas war //@followup 
         uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
         if (rarity <= COMMON_RARITY) {
             tokenIdToRarity[tokenId] = COMMON_RARITY;
@@ -145,19 +178,28 @@ contract PuppyRaffle is ERC721, Ownable {
             tokenIdToRarity[tokenId] = LEGENDARY_RARITY;
         }
 
-        delete players;
+        delete players; // e resetting the array
         raffleStartTime = block.timestamp;
         previousWinner = winner;
+
+        // written the winner wouldnt get the money if their fallback was messed up !
+
         (bool success,) = winner.call{value: prizePool}("");
+         //  written can we reenter here ?
         require(success, "PuppyRaffle: Failed to send prize pool to winner");
         _safeMint(winner, tokenId);
     }
 
     /// @notice this function will withdraw the fees to the feeAddress
     function withdrawFees() external {
+        // q ok so , if the protocol has players someone cant withdraw fees? MEV skipped
+        // MEV Skipped is it difficult the withdraw fees ? 
+        // written mishandling ETH !!
         require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
         uint256 feesToWithdraw = totalFees;
         totalFees = 0;
+        // slither-disable-next-line arbitrary-send-eth
+        // onlyowner has control and contructor has control so that we can ignore this slither error 
         (bool success,) = feeAddress.call{value: feesToWithdraw}("");
         require(success, "PuppyRaffle: Failed to withdraw fees");
     }
